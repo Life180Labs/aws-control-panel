@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8
+moto[ec2,rds]>=5
+playwright>=1.40

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="dark light">
+  <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>All Clients · AWS Environment Control</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap.min.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body data-page="overview">
+  {% include "_icons.html" %}
+
+  <div class="app">
+    {% with nav_current = 'overview' %}{% include "_sidebar.html" %}{% endwith %}
+    <div class="scrim" aria-hidden="true"></div>
+
+    <div class="app-main">
+      <header class="topbar">
+        <button class="nav-burger" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar"><svg class="ic"><use href="#i-menu"/></svg></button>
+        <a class="logo-link" href="{{ url_for('overview') }}" aria-label="L180 Labs: All Clients"><img class="logo logo-on-light" src="{{ url_for('static', filename='img/l180-logo.svg') }}" alt=""><img class="logo logo-on-dark" src="{{ url_for('static', filename='img/l180-logo-dark.svg') }}" alt=""></a>
+      </header>
+
+  <main class="page">
+    <section class="intro">
+      <h1>All <span class="accent">Clients</span></h1>
+      <p>Every client environment in one place. Open one to manage its databases and applications.</p>
+      <p class="tally" id="tally" aria-live="polite">Checking environments</p>
+    </section>
+
+    <div class="notice" id="ov-conn-alert" role="alert" hidden>
+      <svg class="ic"><use href="#i-alert"/></svg>
+      <span>Couldn't refresh the status. Showing the last known state and retrying.</span>
+    </div>
+
+    <section class="clients" id="clients" aria-label="Clients">
+      {% for c in clients %}
+      <article class="client" data-slug="{{ c.slug }}" data-name="{{ c.name }}" data-state="unknown" data-busy="false">
+        <div class="bar" aria-hidden="true"></div>
+        <header class="client-head">
+          <div>
+            <h2><a href="{{ url_for('client_page', slug=c.slug) }}">{{ c.name }}</a></h2>
+            <p>{{ c.region }}</p>
+          </div>
+          <span class="pill" data-state="unknown"><i class="dot" aria-hidden="true"></i><span class="js-label">Checking</span></span>
+        </header>
+        <ul class="client-res">
+          <li data-res="rds" data-state="unknown"><i class="dot" aria-hidden="true"></i><span>Databases</span><span class="res-val js-rds">Checking</span></li>
+          <li data-res="ec2" data-state="unknown"><i class="dot" aria-hidden="true"></i><span>Applications</span><span class="res-val js-ec2">Checking</span></li>
+        </ul>
+        <p class="client-op js-op" hidden></p>
+        <div class="client-actions">
+          <a class="btn-l btn-amber" href="{{ url_for('client_page', slug=c.slug) }}">Manage</a>
+          <button class="btn-l btn-line btn-sq js-start" type="button" aria-label="Start everything for {{ c.name }}" title="Start everything" disabled>
+            <span class="spin" aria-hidden="true"></span><svg class="ic ic-fill"><use href="#i-play"/></svg>
+          </button>
+          <button class="btn-l btn-line btn-sq js-stop" type="button" aria-label="Stop everything for {{ c.name }}" title="Stop everything" disabled>
+            <span class="spin" aria-hidden="true"></span><svg class="ic ic-fill"><use href="#i-stop"/></svg>
+          </button>
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+
+    <footer class="meta">
+      <span id="ov-updated">Waiting for the first update</span>
+      <button class="btn-icon" id="ov-refresh" type="button" aria-label="Refresh status"><svg class="ic"><use href="#i-refresh"/></svg></button>
+    </footer>
+  </main>
+    </div>
+  </div>
+
+  {% include "_shell.html" %}
+
+  <script src="{{ url_for('static', filename='js/common.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/nav.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/overview.js') }}" defer></script>
+</body>
+</html>

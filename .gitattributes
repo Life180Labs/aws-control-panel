@@ -1,0 +1,15 @@
+# Normalise line endings to LF in the repository and in checkouts. This project is developed on Windows
+# (core.autocrlf=true) but deployed on Linux (Railway): a CRLF in the Procfile or a script breaks the start command.
+* text=auto eol=lf
+
+# Never touch binary files (line-ending conversion would corrupt them)
+*.woff2 binary
+*.woff binary
+*.ttf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary

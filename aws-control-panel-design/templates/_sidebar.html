@@ -1,0 +1,45 @@
+<!--sidebar: needs `nav_current` ('overview' or a client slug), `clients` and `user` from the page context-->
+<aside class="sidebar" id="sidebar" aria-label="Main navigation">
+  <div class="sidebar-head">
+    <a class="logo-link" href="{{ url_for('overview') }}" aria-label="L180 Labs: All Clients"><img class="logo logo-on-light" src="{{ url_for('static', filename='img/l180-logo.svg') }}" alt=""><img class="logo logo-on-dark" src="{{ url_for('static', filename='img/l180-logo-dark.svg') }}" alt=""></a>
+    <button class="nav-close" type="button" aria-label="Close menu"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+
+  <nav class="side-nav" aria-label="Clients">
+    <div class="nav-group" id="nav-group">
+      <div class="nav-row">
+        <a class="nav-item nav-all" href="{{ url_for('overview') }}"{% if nav_current == 'overview' %} aria-current="page"{% endif %}>
+          <svg class="ic"><use href="#i-grid"/></svg>
+          <span class="nav-label">All Clients</span>
+          <span class="nav-count" aria-label="{{ clients|length }} clients">{{ clients|length }}</span>
+        </a>
+        <button class="nav-toggle" type="button" aria-expanded="true" aria-controls="nav-clients" aria-label="Collapse client list"><svg class="ic"><use href="#i-chevron"/></svg></button>
+      </div>
+      <ul class="nav-sub" id="nav-clients">
+        {% for c in clients %}
+        <li>
+          <a class="nav-item nav-client" href="{{ url_for('client_page', slug=c.slug) }}" data-slug="{{ c.slug }}"{% if nav_current == c.slug %} aria-current="page"{% endif %}>
+            <i class="dot nav-dot" data-state="unknown" aria-hidden="true"></i>
+            <span class="nav-label" title="{{ c.name }}">{{ c.name }}</span>
+            <span class="visually-hidden js-nav-status"></span>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </nav>
+
+  <div class="sidebar-foot">
+    <div class="user" title="{{ user.email }}">
+      <span class="avatar" aria-hidden="true">{{ user.name[:1]|upper }}</span>
+      <span class="user-meta"><span class="user-name">{{ user.name }}</span><span class="user-email">{{ user.email }}</span></span>
+    </div>
+    <div class="foot-actions">
+      <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme"><svg class="ic ic-sun"><use href="#i-sun"/></svg><svg class="ic ic-moon"><use href="#i-moon"/></svg></button>
+      <form method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn-l btn-line" type="submit" aria-label="Sign out"><svg class="ic"><use href="#i-logout"/></svg><span>Sign out</span></button>
+      </form>
+    </div>
+  </div>
+</aside>

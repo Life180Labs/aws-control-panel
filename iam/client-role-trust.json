@@ -1,0 +1,11 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::CONTROL_PANEL_ACCOUNT_ID:user/l180-control-panel" },
+      "Action": "sts:AssumeRole",
+      "Condition": { "StringEquals": { "sts:ExternalId": "SAME_VALUE_AS_external_id_IN_clients.json" } }
+    }
+  ]
+}

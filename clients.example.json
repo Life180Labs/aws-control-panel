@@ -1,0 +1,27 @@
+{
+  "clients": [
+    {
+      "slug": "uniservice",
+      "name": "Uniservice",
+      "region": "ap-south-1",
+      "rds_instances": [
+        { "id": "uniservice-db", "name": "Primary database" },
+        { "id": "uniservice-reporting-db", "name": "Reporting database" }
+      ],
+      "ec2_instances": [
+        { "id": "i-0123456789abcdef0", "name": "Web server" },
+        { "id": "i-0fedcba9876543210", "name": "API server" }
+      ]
+    },
+    {
+      "slug": "another-client",
+      "name": "Another Client",
+      "region": "ap-south-1",
+      "role_arn": "arn:aws:iam::111122223333:role/l180-control-panel",
+      "rds_instances": [],
+      "ec2_instances": [
+        { "id": "i-0aaaabbbbccccdddd", "name": "Application server" }
+      ]
+    }
+  ]
+}

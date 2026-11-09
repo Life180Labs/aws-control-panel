@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="dark light">
+  <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{{ client.name }} · AWS Environment Control</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap.min.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body data-page="client" data-client="{{ client.slug }}" data-client-name="{{ client.name }}">
+  {% include "_icons.html" %}
+
+  <div class="app">
+    {% with nav_current = client.slug %}{% include "_sidebar.html" %}{% endwith %}
+    <div class="scrim" aria-hidden="true"></div>
+
+    <div class="app-main">
+      <header class="topbar">
+        <button class="nav-burger" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar"><svg class="ic"><use href="#i-menu"/></svg></button>
+        <a class="logo-link" href="{{ url_for('overview') }}" aria-label="L180 Labs: All Clients"><img class="logo logo-on-light" src="{{ url_for('static', filename='img/l180-logo.svg') }}" alt=""><img class="logo logo-on-dark" src="{{ url_for('static', filename='img/l180-logo-dark.svg') }}" alt=""></a>
+      </header>
+
+  <main class="page">
+    <section class="intro">
+      <nav class="crumbs" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="{{ url_for('overview') }}"><svg class="ic"><use href="#i-grid"/></svg><span>All Clients</span></a></li>
+          <li aria-current="page"><span id="crumb-client">{{ client.name }}</span></li>
+        </ol>
+      </nav>
+      <div class="intro-title">
+        <h1 id="client-name" class="accent">{{ client.name }}</h1>
+        <span class="region-chip" title="AWS region"><svg class="ic"><use href="#i-globe"/></svg><span class="visually-hidden">AWS region: </span><span id="region">{{ client.region }}</span></span>
+      </div>
+      <p>Start this environment when it's needed and stop it when you're done, so you only pay for what you use.</p>
+    </section>
+
+    <div class="notice" id="conn-alert" role="alert" hidden>
+      <svg class="ic"><use href="#i-alert"/></svg>
+      <span>Couldn't refresh the status. Showing the last known state and retrying.</span>
+    </div>
+
+    <!-- Whole environment -->
+    <section class="env" id="env" data-state="unknown" aria-labelledby="env-label">
+      <div class="env-main">
+        <div>
+          <p class="env-kicker" id="env-label">Environment</p>
+          <p class="env-state"><i class="dot" aria-hidden="true"></i><span id="env-state">Checking status</span></p>
+          <p class="env-detail" id="env-detail" aria-live="polite"></p>
+        </div>
+        <div class="env-actions">
+          <button class="btn-l btn-amber" id="btn-env-start" type="button" disabled>
+            <span class="spin" aria-hidden="true"></span><svg class="ic ic-fill"><use href="#i-play"/></svg><span>Start everything</span>
+          </button>
+          <button class="btn-l btn-ghost-dark" id="btn-env-stop" type="button" disabled>
+            <span class="spin" aria-hidden="true"></span><svg class="ic ic-fill"><use href="#i-stop"/></svg><span>Stop everything</span>
+          </button>
+        </div>
+      </div>
+      <div class="progress-steps" id="env-progress" hidden>
+        <ol class="steps" id="env-steps"></ol>
+        <p class="progress-msg" id="env-message"></p>
+      </div>
+    </section>
+
+    <!-- Resources: every database and application the client has. Rows are rendered from /api/c/<slug>/status. -->
+    <section class="flow" id="flow" data-flow="idle" aria-label="Resources">
+      <p class="flow-empty" id="flow-empty">Loading resources</p>
+      <section class="group" id="group-rds" data-kind="rds" aria-labelledby="rds-title" hidden>
+        <div class="bar" aria-hidden="true"></div>
+        <header class="group-head">
+          <span class="badge-ic badge-violet"><svg class="ic"><use href="#i-database"/></svg></span>
+          <div><h2 id="rds-title">Databases</h2><p class="js-sub"></p></div>
+          <div class="group-actions" hidden>
+            <button class="btn-l btn-line btn-sm js-start-all" type="button"><span class="spin" aria-hidden="true"></span><svg class="ic ic-fill"><use href="#i-play"/></svg><span>Start all</span></button>
+            <button class="btn-l btn-line btn-sm js-stop-all" type="button"><span class="spin" aria-hidden="true"></span><svg class="ic ic-fill"><use href="#i-stop"/></svg><span>Stop all</span></button>
+          </div>
+        </header>
+        <ul class="rows js-rows"></ul>
+        <p class="group-note js-note" hidden></p>
+      </section>
+      <div class="connector" aria-hidden="true" hidden><div class="line"></div><i class="glow"></i></div>
+      <section class="group" id="group-ec2" data-kind="ec2" aria-labelledby="ec2-title" hidden>
+        <div class="bar" aria-hidden="true"></div>
+        <header class="group-head">
+          <span class="badge-ic badge-blue"><svg class="ic"><use href="#i-server"/></svg></span>
+          <div><h2 id="ec2-title">Applications</h2><p class="js-sub"></p></div>
+          <div class="group-actions" hidden>
+            <button class="btn-l btn-line btn-sm js-start-all" type="button"><span class="spin" aria-hidden="true"></span><svg class="ic ic-fill"><use href="#i-play"/></svg><span>Start all</span></button>
+            <button class="btn-l btn-line btn-sm js-stop-all" type="button"><span class="spin" aria-hidden="true"></span><svg class="ic ic-fill"><use href="#i-stop"/></svg><span>Stop all</span></button>
+          </div>
+        </header>
+        <ul class="rows js-rows"></ul>
+        <p class="group-note js-note" hidden></p>
+      </section>
+    </section>
+
+    <template id="row-tpl">
+      <li class="row" data-state="unknown">
+        <div class="row-main"><p class="row-name"></p><p class="row-id"></p></div>
+        <span class="pill" data-state="unknown"><i class="dot" aria-hidden="true"></i><span class="js-label">Checking</span></span>
+        <div class="row-actions">
+          <button class="btn-l btn-line btn-sm js-start" type="button" disabled><span class="spin" aria-hidden="true"></span><svg class="ic ic-fill"><use href="#i-play"/></svg><span>Start</span></button>
+          <button class="btn-l btn-line btn-sm js-stop" type="button" disabled><span class="spin" aria-hidden="true"></span><svg class="ic ic-fill"><use href="#i-stop"/></svg><span>Stop</span></button>
+        </div>
+        <p class="row-error" hidden></p>
+      </li>
+    </template>
+
+    <footer class="meta">
+      <span id="updated">Waiting for the first update</span>
+      <button class="btn-icon" id="btn-refresh" type="button" aria-label="Refresh status"><svg class="ic"><use href="#i-refresh"/></svg></button>
+    </footer>
+  </main>
+    </div>
+  </div>
+
+  {% include "_shell.html" %}
+
+  <script src="{{ url_for('static', filename='js/common.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/nav.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}" defer></script>
+</body>
+</html>

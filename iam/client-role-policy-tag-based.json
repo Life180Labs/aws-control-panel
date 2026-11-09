@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadStatus",
+      "Effect": "Allow",
+      "Action": ["ec2:DescribeInstances"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "StartStopTaggedInstances",
+      "Effect": "Allow",
+      "Action": ["ec2:StartInstances", "ec2:StopInstances"],
+      "Resource": "arn:aws:ec2:REGION:CLIENT_ACCOUNT_ID:instance/*",
+      "Condition": { "StringEquals": { "aws:ResourceTag/l180-control-panel": "managed" } }
+    },
+    {
+      "Sid": "TaggedDatabases",
+      "Effect": "Allow",
+      "Action": ["rds:DescribeDBInstances", "rds:StartDBInstance", "rds:StopDBInstance"],
+      "Resource": "arn:aws:rds:REGION:CLIENT_ACCOUNT_ID:db:*",
+      "Condition": { "StringEquals": { "aws:ResourceTag/l180-control-panel": "managed" } }
+    }
+  ]
+}

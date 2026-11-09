@@ -1,0 +1,29 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadStatus",
+      "Effect": "Allow",
+      "Action": ["ec2:DescribeInstances"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "StartStopListedInstances",
+      "Effect": "Allow",
+      "Action": ["ec2:StartInstances", "ec2:StopInstances"],
+      "Resource": [
+        "arn:aws:ec2:REGION:CLIENT_ACCOUNT_ID:instance/i-0123456789abcdef0",
+        "arn:aws:ec2:REGION:CLIENT_ACCOUNT_ID:instance/i-0fedcba9876543210"
+      ]
+    },
+    {
+      "Sid": "DatabasesStatusStartStop",
+      "Effect": "Allow",
+      "Action": ["rds:DescribeDBInstances", "rds:StartDBInstance", "rds:StopDBInstance"],
+      "Resource": [
+        "arn:aws:rds:REGION:CLIENT_ACCOUNT_ID:db:uniservice-db",
+        "arn:aws:rds:REGION:CLIENT_ACCOUNT_ID:db:uniservice-reporting-db"
+      ]
+    }
+  ]
+}
