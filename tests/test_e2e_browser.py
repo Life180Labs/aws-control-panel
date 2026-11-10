@@ -26,12 +26,12 @@ def free_port():
         return s.getsockname()[1]
 
 
-def launch(extra_env=None):
+def launch(extra_env=None, port=None):
     """Start the app (fake AWS, sped up) on a free port; returns (process, base_url) once /healthz answers."""
-    port = free_port()
+    port = port or free_port()
     env = {**os.environ, "AUTH_MODE": "dev", "AWS_MODE": "fake", "FAKE_SPEED": "0.25", "OP_POLL_INTERVAL": "0.5",
            "STATUS_CACHE_TTL": "1", "CLIENTS_FILE": str(ROOT / "clients.example.json"), "PORT": str(port), "SECRET_KEY": "e2e",
-           "RATE_LIMIT_ENABLED": "0", "PYTHONUNBUFFERED": "1", **(extra_env or {})}
+           "RATE_LIMIT_ENABLED": "0", "PYTHONUNBUFFERED": "1", "L180_SKIP_DOTENV": "1", **(extra_env or {})}
     for k in ("RAILWAY_ENVIRONMENT", "PRODUCTION"):
         env.pop(k, None)
     if not (extra_env or {}).get("CLIENTS_JSON"):
@@ -537,4 +537,100 @@ def test_client_name_heading_uses_the_accent_orange_in_both_themes(server, brows
     assert colour("#client-name") == colour(".accent")
     page.goto(server + "/")
     assert colour(".intro h1 .accent") == "rgb(247, 146, 10)"       # consistent with the overview's accent word
+    ctx.close()
+
+
+
+# ---------------------------------------------------------------- Google sign-in in a real browser
+# The real app server (AUTH_MODE=google) talks to the stand-in provider from tests/fake_idp.py; the browser follows the
+# real redirects: sign-in page -> provider -> /auth/callback -> overview.
+
+@pytest.fixture(scope="module")
+def sso_server():
+    from tests.fake_idp import FakeIdP
+    os.environ["AUTHLIB_INSECURE_TRANSPORT"] = "1"                      # plain-http stand-in provider (child process inherits)
+    idp = FakeIdP()
+    port = free_port()
+    proc, base = launch({"AUTH_MODE": "google", "GOOGLE_CLIENT_ID": idp.client_id, "GOOGLE_CLIENT_SECRET": idp.client_secret,
+                         "OIDC_DISCOVERY_URL": idp.discovery_url, "PUBLIC_BASE_URL": f"http://127.0.0.1:{port}",
+                         "ALLOWED_DOMAIN": "life180labs.com"}, port=port)
+    yield base, idp
+    stop(proc)
+    idp.close()
+    os.environ.pop("AUTHLIB_INSECURE_TRANSPORT", None)
+
+
+def test_google_sign_in_round_trip_in_the_browser(sso_server, browser):
+    base, idp = sso_server
+    idp.claim_overrides = {}
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    watch = Watch(page)
+    page.goto(base + "/")
+    assert page.url.endswith("/login")                                   # protected: sent to the sign-in page
+    expect(page.get_by_text("life180labs.com")).to_be_visible()
+    page.get_by_role("link", name="Sign in with Google").click()
+    page.wait_for_url(base + "/")                                        # provider -> callback -> overview, all by redirects
+    expect(page.locator("#sidebar").get_by_text("Ada Lovelace")).to_be_visible()
+    expect(page.locator("#sidebar").get_by_text("ada@life180labs.com")).to_be_visible()
+    expect(page.get_by_role("heading", level=1)).to_have_text("All Clients")
+    assert idp.authorize_requests[-1]["code_challenge_method"] == "S256"
+
+    page.reload()                                                        # the session survives a reload
+    expect(page.get_by_role("heading", level=1)).to_have_text("All Clients")
+    page.get_by_role("button", name="Sign out").click()
+    page.wait_for_url(base + "/login")
+    page.goto(base + "/c/uniservice")
+    assert page.url.endswith("/login")                                   # signed out for real
+    assert watch.problems == [], "\n".join(watch.problems)
+    ctx.close()
+
+
+def test_google_sign_in_refuses_an_outsider_with_a_friendly_message(sso_server, browser):
+    base, idp = sso_server
+    idp.claim_overrides = {"email": "outsider@gmail.com", "hd": None, "name": "Mallory"}
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    watch = Watch(page)
+    page.goto(base + "/login")
+    page.get_by_role("link", name="Sign in with Google").click()
+    page.wait_for_url(re.compile(r".*/login\?error=domain$"))
+    expect(page.get_by_role("alert")).to_contain_text("isn't allowed to use this tool")
+    expect(page.get_by_text("Mallory")).to_have_count(0)                 # nothing from the provider is shown
+    page.goto(base + "/")
+    assert page.url.endswith("/login")                                   # and no session was created
+    assert watch.problems == [], "\n".join(watch.problems)
+    ctx.close()
+    idp.claim_overrides = {}
+
+
+def test_connector_arrow_is_two_sided_and_symmetric(server, browser):
+    """Down = start order (databases first), up = stop order (applications first): one arrowhead at each end, mirrored."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    page.goto(server + "/login/google")
+    page.goto(server + "/c/uniservice")
+    expect(page.locator(".connector")).to_be_visible()
+    g = page.evaluate("""() => {
+      const line = document.querySelector('.connector .line'), r = line.getBoundingClientRect();
+      const up = getComputedStyle(line, '::before'), down = getComputedStyle(line, '::after');
+      const f = (m) => parseFloat(m.replace('matrix(', '').replace(')', '').split(',')[5]);   // translateY of the transform
+      const half = parseFloat(up.width) / 2, reach = half * Math.SQRT2;                       // a 45deg square: centre to vertex
+      const upCentre = r.top + parseFloat(up.top) + half + f(up.transform);
+      const downCentre = r.bottom - parseFloat(down.bottom) - half + f(down.transform);
+      const cardAbove = document.querySelector('#group-rds').getBoundingClientRect();
+      const cardBelow = document.querySelector('#group-ec2').getBoundingClientRect();
+      return {
+        upContent: up.content, downContent: down.content, upColour: up.borderTopColor, downColour: down.borderBottomColor,
+        upSize: [up.width, up.height], downSize: [down.width, down.height],
+        upTip: upCentre - reach, downTip: downCentre + reach, top: r.top, bottom: r.bottom,
+        clearAbove: (upCentre - reach) - cardAbove.bottom, clearBelow: cardBelow.top - (downCentre + reach),
+      };
+    }""")
+    assert g["upContent"] != "none" and g["downContent"] != "none"            # both arrowheads exist
+    assert g["upColour"] == g["downColour"] and g["upSize"] == g["downSize"]  # same colour and size
+    assert abs(g["upTip"] - g["top"]) <= 1.5, "upward tip is not on the top end of the line"
+    assert abs(g["downTip"] - g["bottom"]) <= 1.5, "downward tip is not on the bottom end of the line"
+    assert g["clearAbove"] >= 4 and g["clearBelow"] >= 4, "an arrowhead touches a card"
+    assert abs(g["clearAbove"] - g["clearBelow"]) <= 1.5, "clearance above and below should match"
     ctx.close()

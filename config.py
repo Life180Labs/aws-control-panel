@@ -24,9 +24,53 @@ REGION_RE = re.compile(r"^[a-z]{2}(?:-[a-z]+)+-\d$")
 
 KINDS = ("rds", "ec2")
 
+GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
+DOMAIN_RE = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
+
 
 class ConfigError(Exception):
     """Anything that makes the app unsafe or impossible to start."""
+
+
+_DOTENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def load_dotenv(path: Path | None = None, environ=None) -> list[str]:
+    """Local development convenience: copy KEY=VALUE lines from `.env` into the environment.
+
+    * real environment variables always win (a value is only filled in when the name is not set);
+    * does nothing in production (Railway sets RAILWAY_ENVIRONMENT) or when L180_SKIP_DOTENV is set (the tests);
+    * no variable expansion; returns the NAMES it set, never values.
+    """
+    environ = os.environ if environ is None else environ
+    if environ.get("RAILWAY_ENVIRONMENT") or environ.get("PRODUCTION") or environ.get("L180_SKIP_DOTENV"):
+        return []
+    path = path or BASE_DIR / ".env"
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        raise ConfigError(f"{path.name} must be UTF-8 text (PowerShell's `>` writes UTF-16: save it from an editor instead).") from None
+    loaded = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if not _DOTENV_KEY.match(key):
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        elif " #" in value:
+            value = value.split(" #", 1)[0].rstrip()          # trailing comment on an unquoted value
+        if key not in environ:
+            environ[key] = value
+            loaded.append(key)
+    return loaded
 
 
 @dataclass(frozen=True)
@@ -179,10 +223,17 @@ class Settings:
     fake_speed: float = 1.0
     session_hours: float = 12.0
     trust_proxy: bool = False
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    oidc_discovery_url: str = GOOGLE_DISCOVERY_URL
+    public_base_url: str = ""
+    rate_login: str = "20 per minute"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
-        env = os.environ if env is None else env
+        if env is None:
+            load_dotenv()              # local development only; see load_dotenv()
+            env = os.environ
         production = bool(env.get("RAILWAY_ENVIRONMENT")) or _flag(env, "PRODUCTION")
         auth_mode = (env.get("AUTH_MODE") or ("google" if production else "dev")).lower()
         aws_mode = (env.get("AWS_MODE") or "real").lower()
@@ -195,8 +246,25 @@ class Settings:
             raise ConfigError("Refusing to start: AUTH_MODE=dev is a development stub and cannot run in production.")
         if production and aws_mode == "fake":
             raise ConfigError("Refusing to start: AWS_MODE=fake serves pretend data and cannot run in production.")
+
+        allowed_domain = env.get("ALLOWED_DOMAIN", "life180labs.com").strip().lower()
+        client_id = env.get("GOOGLE_CLIENT_ID", "").strip()
+        client_secret = env.get("GOOGLE_CLIENT_SECRET", "").strip()
+        discovery = env.get("OIDC_DISCOVERY_URL", "").strip() or GOOGLE_DISCOVERY_URL
+        base_url = env.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
         if auth_mode == "google":
-            raise ConfigError("AUTH_MODE=google (SSO) is not implemented yet; it arrives in Phase 2.")
+            if not client_id or not client_secret:
+                raise ConfigError("AUTH_MODE=google needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET "
+                                  "(Google Cloud console > APIs & Services > Credentials; see README).")
+            if not DOMAIN_RE.match(allowed_domain):
+                raise ConfigError(f"ALLOWED_DOMAIN must be a bare domain like example.com, got '{allowed_domain}'.")
+            if base_url and not re.match(r"^https?://[^/\s]+$", base_url):
+                raise ConfigError("PUBLIC_BASE_URL must look like https://panel.example.com (no path).")
+            if production and not base_url.startswith("https://"):
+                raise ConfigError("PUBLIC_BASE_URL (https://...) is required in production: it fixes the OAuth redirect "
+                                  "address instead of trusting request headers.")
+            if production and not discovery.startswith("https://"):
+                raise ConfigError("OIDC_DISCOVERY_URL must be https in production.")
 
         secret = env.get("SECRET_KEY", "")
         if not secret:
@@ -206,7 +274,7 @@ class Settings:
 
         return cls(
             production=production, auth_mode=auth_mode, aws_mode=aws_mode, secret_key=secret,
-            allowed_domain=env.get("ALLOWED_DOMAIN", "life180labs.com").strip(),
+            allowed_domain=allowed_domain,
             dev_user_name=env.get("DEV_USER_NAME", "Local Admin"),
             dev_user_email=env.get("DEV_USER_EMAIL", "admin@example.com"),
             clients=load_clients(env, production),
@@ -219,4 +287,7 @@ class Settings:
             fake_speed=_num(env, "FAKE_SPEED", 1.0),
             session_hours=_num(env, "SESSION_HOURS", 12.0),
             trust_proxy=production or _flag(env, "TRUST_PROXY"),
+            google_client_id=client_id, google_client_secret=client_secret,
+            oidc_discovery_url=discovery, public_base_url=base_url,
+            rate_login=env.get("RATE_LIMIT_LOGIN", "20 per minute"),
         )

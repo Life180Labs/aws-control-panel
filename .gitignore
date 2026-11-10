@@ -8,6 +8,12 @@
 
 # Real client / AWS resource IDs. The committed template is clients.example.json
 /clients.json
+/clients.*.json
+!/clients.example.json
+
+# Google OAuth client downloads: "Download JSON" in Google Cloud saves client_secret_<id>.apps.googleusercontent.com.json
+client_secret*.json
+client_secrets*.json
 
 # AWS and TLS credentials, in case one lands in the folder by accident
 .aws/
@@ -21,6 +27,10 @@ secrets/
 credentials
 credentials.json
 service-account*.json
+
+# SSH private keys
+id_rsa*
+id_ed25519*
 
 # ---------------------------------------------------------------------------
 # Python

@@ -49,8 +49,8 @@ def _setup_logging():
 
 
 def create_app(settings: Settings | None = None, backend=None) -> Flask:
-    settings = settings or Settings.from_env()
     _setup_logging()
+    settings = settings or Settings.from_env()
     mimetypes.add_type("font/woff2", ".woff2")     # not in every OS registry; the UI's fonts depend on it
 
     app = Flask(__name__, template_folder=str(DESIGN_DIR / "templates"), static_folder=str(DESIGN_DIR / "static"))
@@ -89,10 +89,11 @@ def create_app(settings: Settings | None = None, backend=None) -> Flask:
         u = session.get("user") or {}
         return u.get("email") or get_remote_address()
     limiter = Limiter(rate_key, app=app, storage_uri="memory://", default_limits=[])
+    app.extensions["l180_limiter"] = limiter     # keep it alive: Flask-Limiter's decorators only hold a weak reference to it
     limiter.limit(settings.rate_read, methods=["GET"])(api.bp)
     limiter.limit(settings.rate_write, methods=["POST"])(api.bp)
 
-    auth.register(app, settings)
+    auth.register(app, settings, rate_limit=limiter.limit(settings.rate_login))   # anonymous endpoints: limited per client IP
     app.register_blueprint(api.bp)
 
     # ---------- pages ----------
@@ -139,7 +140,9 @@ def create_app(settings: Settings | None = None, backend=None) -> Flask:
 
     @app.errorhandler(RateLimitExceeded)
     def on_rate_limit(e):
-        return jsonify(ok=False, error="Too many requests. Wait a moment and try again."), 429
+        if wants_json():
+            return jsonify(ok=False, error="Too many requests. Wait a moment and try again."), 429
+        return redirect(url_for("login", error="toomany"))        # browser navigation (sign-in): friendly page, not JSON
 
     @app.errorhandler(HTTPException)
     def on_http_error(e):

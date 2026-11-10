@@ -308,12 +308,26 @@ def test_dev_stub_cannot_run_in_production():
         Settings.from_env({"RAILWAY_ENVIRONMENT": "production", "AUTH_MODE": "dev", "SECRET_KEY": "x"})
 
 
-# ---------- production behaviour (settings forced, since production cannot boot until SSO exists) ----------
+# ---------- production behaviour (the real production configuration: Google sign-in, https address) ----------
+
+PROD_ENV = {"RAILWAY_ENVIRONMENT": "production", "SECRET_KEY": "p" * 40, "CLIENTS_FILE": EXAMPLE,
+            "GOOGLE_CLIENT_ID": "dummy.apps.googleusercontent.com", "GOOGLE_CLIENT_SECRET": "dummy-secret",
+            "PUBLIC_BASE_URL": "https://panel.example.com", "ALLOWED_DOMAIN": "life180labs.com"}
+
 
 def prod_app():
-    import dataclasses
-    s = dataclasses.replace(Settings.from_env(ENV), production=True, trust_proxy=True)
-    return create_app(s, FakeBackend(s.clients, speed=0))
+    """What gunicorn "app:create_app()" builds on Railway. No network is touched until someone actually signs in."""
+    return create_app(Settings.from_env(PROD_ENV))
+
+
+def test_production_uses_google_sign_in_and_has_no_dev_login():
+    app = prod_app()
+    assert app.extensions["l180_settings"].auth_mode == "google"
+    c = app.test_client()
+    https = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "panel.example.com"}
+    stray = c.get("/auth/callback", headers=https)                    # the Google callback exists and rejects strays
+    assert stray.status_code == 302 and stray.headers["Location"].endswith("/login?error=failed")
+    assert c.get("/c/uniservice", headers=https).headers["Location"].endswith("/login")   # nobody is signed in by default
 
 
 def test_production_redirects_http_to_https_but_not_the_healthcheck():
@@ -323,15 +337,18 @@ def test_production_redirects_http_to_https_but_not_the_healthcheck():
     assert c.get("/healthz").status_code == 200                      # Railway probes over plain HTTP
 
 
-def test_production_sets_hsts_and_secure_cookie_behind_proxy():
-    c = prod_app().test_client()
-    hdr = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "panel.example.com"}
-    r = c.get("/login", headers=hdr)
-    assert r.status_code == 200
-    assert "max-age" in r.headers["Strict-Transport-Security"]
-    r = c.get("/login/google", headers=hdr)
-    cookie = r.headers["Set-Cookie"]
-    assert "Secure" in cookie and "HttpOnly" in cookie and "SameSite=Lax" in cookie
+def test_production_sets_hsts_and_a_locked_down_session_cookie_policy():
+    app = prod_app()
+    r = app.test_client().get("/login", headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "panel.example.com"})
+    assert r.status_code == 200 and "max-age" in r.headers["Strict-Transport-Security"]
+    assert app.config["SESSION_COOKIE_SECURE"] is True and app.config["SESSION_COOKIE_HTTPONLY"] is True
+    assert app.config["SESSION_COOKIE_SAMESITE"] == "Lax"            # Lax (not Strict): the cookie must survive the return from Google
+
+
+def test_production_refuses_to_run_the_dev_stub_or_fake_aws():
+    for bad in ({"AUTH_MODE": "dev"}, {"AWS_MODE": "fake"}):
+        with pytest.raises(Exception, match="Refusing to start"):
+            Settings.from_env({**PROD_ENV, **bad})
 
 
 # ---------- breadcrumbs / navigation ----------

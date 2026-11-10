@@ -3,7 +3,7 @@
 Working log for the Flask backend. The frontend lives in `aws-control-panel-design/` and is the source of truth;
 Flask serves its `templates/` and `static/` directly. Exactly **one** frontend edit was needed (see "Frontend changes").
 
-## STATUS: Phase 1 complete and verified. Waiting at the gate for "APPROVED FOR SSO".
+## STATUS: Phase 1 (features) and Phase 2 (Google SSO) are implemented and verified. Not yet exercised: a real Google login and a Railway deploy (both need the owner's credentials).
 
 Final evidence (3 consecutive full runs):
 ```
@@ -49,6 +49,69 @@ Not changed: `aws-control-panel-design/preview/index.html` embeds its own inline
 mock preview does not have these fixes. The Flask app (the real product) does.
 Also fixed: tests were reading the developer's local `clients.json` (real resource IDs) instead of `clients.example.json`; they
 are now pinned to the example file. (The tests only ever used the fake backend; nothing touched real AWS.)
+
+## .gitignore update for the OAuth credentials (2026-11-10, requested by the owner)
+Re-audited against the disk: nothing tracked matches an ignore rule; the only untracked files are the 3 new test files. Added rules for likely accidents now that Google credentials exist:
+`client_secret*.json` / `client_secrets*.json` (Google Cloud's "Download JSON" file), `/clients.*.json` except `!/clients.example.json` (e.g. `clients.prod.json`), and SSH private keys
+(`id_rsa*`, `id_ed25519*`). Verified each new rule ignores a sample path and that `clients.example.json`, `.env.example`, `iam/*` and the new tests stay trackable.
+
+## Local `.env` support + preparing the local SSO test (2026-11-10, requested by the owner)
+- The README/`.env.example` said to copy `.env.example` to `.env`, but the app only read real environment variables. Added `config.load_dotenv()`: in development
+  `Settings.from_env()` fills in settings from `.env` (real environment variables always win; no variable expansion; returns names only, never values). It does nothing in
+  production (`RAILWAY_ENVIRONMENT`/`PRODUCTION` in the real environment), when `L180_SKIP_DOTENV` is set (the test servers set it), or when settings are passed explicitly
+  (tests). A UTF-16 file (PowerShell `>`) gets a clear error; a UTF-8 BOM is accepted. `app.py` now sets up logging before reading settings.
+  11 tests in `tests/test_dotenv.py`; the full suite (226 passed) was run with a real `.env` present to prove the tests don't read it.
+- Created the owner's local `.env` (git-ignored, verified untracked): `AUTH_MODE=google`, `PUBLIC_BASE_URL=http://localhost:5000`, `ALLOWED_DOMAIN`, a random `SECRET_KEY`,
+  `AWS_MODE=real` with `AWS_PROFILE=uni_test_app`; **`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` left empty** for the owner to fill in (they were never shared with the assistant).
+  Starting now prints "AUTH_MODE=google needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET" (no values shown).
+- Stopped the old dev-mode server on :5000 (its fake "Sign in with Google" button could be mistaken for real SSO and it would block the Google-mode start).
+  Nothing is running until the credentials are in `.env`.
+
+## Local Google-mode server started (2026-11-10, after the owner added the OAuth credentials to `.env`)
+Started `python app.py` (reads `.env`; the assistant never opened it). Verified on http://localhost:5000: healthz 200; `/` and `/c/<slug>` redirect to `/login` (no fake login);
+`/login/google` redirects to `accounts.google.com/o/oauth2/v2/auth` with the right `redirect_uri` (`http://localhost:5000/auth/callback`), scope, PKCE S256, state, nonce and the `hd` hint.
+Preflight (one read-only GET to Google's authorize endpoint, no login): Google answered 302 to `accounts.google.com/v3/signin/identifier`, i.e. it recognises the client ID and
+redirect URI (a wrong redirect URI would have returned 400 `redirect_uri_mismatch`). The actual Google login and consent is done by the owner in a browser.
+
+## Two-sided connector arrow (2026-11-10, requested by the owner)
+The arrow between the Databases and Applications cards now has an arrowhead at both ends: down = start order (databases first), up = stop order (applications first).
+`.connector .line::before` is the exact mirror of `::after`; the line is symmetric (no fade toward one end) and the connector has equal padding above and below
+(64px, 56px on phones). Verified by computed geometry, no screenshots (paused at the owner's request): tips land 0.9px past each end of the line, 7.1px clear of the card
+above and below, same colour and size, at 1280px and 390px. New test `test_connector_arrow_is_two_sided_and_symmetric`. Suite: 215 passed.
+
+## Phase 2: Google SSO (2026-11-10, approved by the owner: "Can u add the SSO now?")
+**Implemented** (`auth.py`, `config.py`, `app.py`): `GoogleProvider` (Authlib, OpenID Connect authorization-code flow) behind the same seam as the dev stub.
+- Per login: `state` (CSRF), `nonce` (replay), PKCE S256. Authlib validates the ID token's RS256 signature (Google's JWKS), issuer, audience, expiry and nonce.
+- **Who gets in**: ALL of `email_verified`, the `hd` (Workspace) claim == `ALLOWED_DOMAIN`, and the email's own domain == `ALLOWED_DOMAIN` (exact: no subdomains,
+  suffix/prefix look-alikes or `a@evil.com@domain`). The `hd` URL parameter is only an account-chooser hint. Personal Gmail has no `hd`, so it is refused.
+- Session is cleared on login and logout (no fixation; CSRF token rotates). Cookie: Secure (production), HttpOnly, SameSite=Lax (Lax is required so it survives the return from Google).
+- Every failure goes back to `/login` with a fixed message (`failed`, `domain`, `toomany`); nothing from the provider is ever displayed. Provider outages at start or
+  at the callback are handled (no 500s). Sign-in endpoints are rate limited per IP (`RATE_LIMIT_LOGIN`, default 20/min) and answer with a friendly page.
+- **Startup safety** (`config.py`): `AUTH_MODE=google` needs `GOOGLE_CLIENT_ID/SECRET` and a valid `ALLOWED_DOMAIN`; in production also `PUBLIC_BASE_URL` (https; fixes the
+  redirect address instead of trusting request headers), an https discovery URL and `SECRET_KEY`. Production still refuses `AUTH_MODE=dev` and `AWS_MODE=fake`;
+  `DevProvider` itself also refuses to be constructed in production. Production now defaults to `google`.
+- Audit log: `event=login provider=google`, `event=login_denied ... reason=...` (email recorded; tokens, codes and secrets never).
+
+**Bugs found while building it**
+1. Rate limiting the sign-in endpoints by wrapping the views after registration crashed every request (`ReferenceError: weakly-referenced object`): Flask-Limiter's
+   decorators hold only a weak reference to the `Limiter`, which was a local variable of `create_app`. Fixed by keeping it on `app.extensions["l180_limiter"]` and applying
+   the limit as a normal decorator (`auth.register(..., rate_limit=...)`).
+2. Authlib rejects a token with no `sub` claim itself ("failed" message), before our domain rules run. Both outcomes are refusals; the test lives with the invalid-token cases.
+
+**Verification** (suite: 214 passed)
+- `tests/fake_idp.py`: a small real OpenID Connect provider (discovery, JWKS, authorize, token; real RS256 signing, PKCE and single-use codes enforced) that can misbehave
+  on purpose. `tests/test_sso.py` (69 tests) runs the app's real code path against it: happy path, 16 identity cases, 6 bad-token cases (audience, issuer, expiry, nonce,
+  missing nonce, missing subject) plus a forged signature, tampered/edited/missing state, replay in the same and another browser, one-time authorization codes, user
+  cancelling, provider down at start and at callback, session fixation, CSRF rotation, cookie flags, rate limiting, audit log contents (no secrets), config validation.
+- **Mutation check**: deliberately weakened each of my own security checks (ignore `hd`, ignore `email_verified`, ignore email domain, suffix match, double `@`, keep old
+  session) one at a time; every mutant was caught by the tests; the original was restored and re-verified.
+- Real-browser round trip (`test_e2e_browser.py`): sign-in page -> stand-in provider -> callback -> overview, sign out; and an outsider gets the friendly refusal with no session.
+- Live check against **Google's real discovery document** with the production configuration (dummy client id): the app builds a correct redirect to
+  `accounts.google.com/o/oauth2/v2/auth` (redirect_uri from `PUBLIC_BASE_URL`, scope, PKCE S256, state, nonce, `hd` hint, `prompt=select_account`) and a Secure/HttpOnly/Lax cookie.
+- Two older production tests used a forced flag with the dev stub; rewritten to build production the real way (Google, https address).
+
+**Not verified (needs the owner)**: a real Google login (needs a Google OAuth client; steps in README "Google sign-in") and the Railway deploy. Known and documented:
+sessions last `SESSION_HOURS` (12h) so removing someone from Workspace does not end an open session (rotate `SECRET_KEY` to sign everyone out); there are no roles.
 
 ## Dark theme by default + light toggle (2026-11-09, requested by the owner)
 - **Dark is the default** (also with JS off / no saved choice). A sun/moon button in the top bar (and top-right on the sign-in page)
@@ -185,7 +248,7 @@ Findings:
 | Operations | In-process daemon threads, 1 gunicorn worker | Simple; state lost on restart (documented) |
 | Status cache | 3s TTL per client+kind; operations bypass it; writes invalidate it | UI polls every 4-15s per tab |
 | Dev auth | `AUTH_MODE=dev`; startup refuses it and `AWS_MODE=fake` in production | Cannot ship by accident |
-| `AUTH_MODE=google` | Startup error "not implemented, Phase 2" | No half-built SSO |
+| `AUTH_MODE=google` | Implemented in Phase 2 (see the Phase 2 section) | Was a startup error until SSO existed |
 
 ## Backlog (all verified)
 - [x] 1. Skeleton: `app.py`, `requirements*.txt`, `Procfile`, `/healthz`, ProxyFix, secure cookies, env config, `.env.example`, `.gitignore`
@@ -249,7 +312,7 @@ visible** (every success/error message hidden). Found by the browser test (`disp
 4. **Not deployed.** Production startup intentionally fails until Phase 2 (SSO). gunicorn itself could not be run on Windows.
 5. Decide when needed: Postgres for a durable audit log / multi-replica (currently in-memory, single worker).
 
-## Phase 2 (SSO), not started
-Waiting for "APPROVED FOR SSO". Plan: `GoogleProvider` (Authlib) behind the existing `auth.py` seam, state+nonce validation,
+## Phase 2 (SSO): done, see "Phase 2: Google SSO" above (kept for the original plan)
+Original plan: Plan: `GoogleProvider` (Authlib) behind the existing `auth.py` seam, state+nonce validation,
 `hd` + `email_verified` + email-suffix domain check, tests with a mocked IdP (wrong domain, unverified email, bad state,
 replayed callback), remove dev stub from production builds, go-live docs.

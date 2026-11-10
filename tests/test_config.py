@@ -72,8 +72,8 @@ def test_dev_defaults():
     ({"RAILWAY_ENVIRONMENT": "production", "AUTH_MODE": "dev", "SECRET_KEY": "x"}, "AUTH_MODE=dev"),
     ({"PRODUCTION": "1", "AUTH_MODE": "dev", "SECRET_KEY": "x"}, "AUTH_MODE=dev"),
     ({"RAILWAY_ENVIRONMENT": "production", "AWS_MODE": "fake", "AUTH_MODE": "google", "SECRET_KEY": "x"}, "AWS_MODE=fake"),
-    ({"RAILWAY_ENVIRONMENT": "production", "SECRET_KEY": "x"}, "Phase 2"),   # production defaults to google
-    ({"AUTH_MODE": "google"}, "Phase 2"),
+    ({"RAILWAY_ENVIRONMENT": "production", "SECRET_KEY": "x"}, "GOOGLE_CLIENT_ID"),   # production defaults to google, which needs credentials
+    ({"AUTH_MODE": "google"}, "GOOGLE_CLIENT_ID"),
     ({"AUTH_MODE": "bogus"}, "AUTH_MODE must be"),
     ({"AWS_MODE": "bogus"}, "AWS_MODE must be"),
     ({"STATUS_CACHE_TTL": "abc"}, "number"),

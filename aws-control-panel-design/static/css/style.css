@@ -285,10 +285,12 @@ body{
 .group-note{margin:2px 0 0;padding-top:14px;border-top:1px solid var(--border-soft);font:500 13.5px/1.5 var(--font);color:var(--muted)}
 
 /* start order: databases first, then applications */
-.connector{position:relative;height:60px;display:flex;justify-content:center;padding:4px 0 8px}
-.connector .line{position:relative;width:3px;height:100%;border-radius:3px;background:linear-gradient(180deg,rgba(79,190,231,.3),var(--cyan))}
+.connector{position:relative;height:64px;display:flex;justify-content:center;padding:8px 0}
+.connector .line{position:relative;width:3px;height:100%;border-radius:3px;background:linear-gradient(180deg,var(--cyan),rgba(79,190,231,.45) 50%,var(--cyan))}
 /* arrowhead: a 45deg-rotated square whose vertex lands on the line's end, with 8px clear of the next card */
 .connector .line::after{content:"";position:absolute;left:50%;bottom:-2px;width:14px;height:14px;border-right:3px solid var(--cyan);border-bottom:3px solid var(--cyan);border-radius:0 0 3px 0;transform:translate(-50%,-4px) rotate(45deg)}
+/* two-sided: down = start order (databases first), up = stop order (applications first). ::before is the mirror image of ::after */
+.connector .line::before{content:"";position:absolute;left:50%;top:-2px;width:14px;height:14px;border-left:3px solid var(--cyan);border-top:3px solid var(--cyan);border-radius:3px 0 0 0;transform:translate(-50%,4px) rotate(45deg)}
 .flow[data-flow="idle"] .connector .glow{display:none}   /* the travelling dot only shows while something is starting/stopping */
 .connector .glow{position:absolute;left:50%;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 4px rgba(79,190,231,.2),0 0 14px rgba(79,190,231,.9)}
 .flow[data-flow="start"] .glow{animation:travel-y 1.5s ease-in-out infinite}
@@ -320,7 +322,7 @@ body{
 .btn-icon{width:40px;height:40px}
 
 @media (max-width:767.98px){
-  .connector{height:52px}
+  .connector{height:56px}
 }
 
 @media (max-width:575.98px){
