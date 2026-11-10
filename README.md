@@ -131,6 +131,12 @@ AWS_MODE=fake            # pretend AWS; use real with AWS_PROFILE=<profile> to u
 * Operation state is in memory: a restart forgets a running operation (the resources keep doing what AWS is doing, and
   the next status read shows it). Hence **one gunicorn worker** (`--workers 1 --threads 8`).
 * Every action writes an audit line: `actor=... client=... target=... action=... result=...`.
+* **Uptime since the last start.** Each running resource shows "Uptime - 3h 12m" (hover for the exact start time) and the environment
+  banner shows "Fully up for ..." (how long everything has been up together). The API rows carry `started_at`, `uptime_seconds` and
+  `uptime_over_seconds`. **EC2** uses the instance's `LaunchTime`, which AWS resets on every stop/start. **RDS** has no start time on the
+  instance, so it uses the newest `DB instance started` event (or the creation event if it was never stopped; reboots do not count).
+  RDS keeps events for only 14 days, so a database up for longer shows "Uptime - over 14 days". This needs the `rds:DescribeEvents`
+  permission (included in `iam/*.json`); without it the uptime is simply hidden and nothing else is affected.
 
 ## AWS permissions (least privilege)
 

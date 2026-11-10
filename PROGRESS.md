@@ -50,6 +50,33 @@ mock preview does not have these fixes. The Flask app (the real product) does.
 Also fixed: tests were reading the developer's local `clients.json` (real resource IDs) instead of `clients.example.json`; they
 are now pinned to the example file. (The tests only ever used the fake backend; nothing touched real AWS.)
 
+## Uptime label wording (2026-11-10, requested by the owner)
+Row label changed from "Up 2h 23m" to **"Uptime - 2h 23m"** (also "Uptime - less than a minute" and "Uptime - over 14 days"). JS-only change (`uptimeLabel` in `common.js`,
+the over-14-days text in `dashboard.js`); the banner's "Fully up for ..." wording is unchanged. Tests and README updated; browser tests, layout audit and uptime tests pass (51).
+
+## Uptime since the last start (2026-11-10, requested by the owner)
+**What it does**: every running resource shows "Up 3h 12m" under its name (tooltip = exact local start time); the environment banner adds "Fully up for ..." (time since the
+LAST resource started, i.e. how long everything has been up together; only shown when every resource's start time is known). The time ticks every 10s without a refetch;
+the server sends seconds-up as of the last refresh. API rows gained `started_at` (UTC ISO), `uptime_seconds`, `uptime_over_seconds`; `/api/overview` is unchanged.
+
+**Where the start time comes from** (checked first against the real test resources, read-only):
+- EC2: `LaunchTime`. AWS resets it on every stop/start (both instances showed 10 Nov, later than our 9 Nov test, so it follows restarts).
+- RDS: the instance itself has no start time, so: the newest `DB instance started` event (verified: 2026-11-09T12:58:29Z = our environment start). Only that message counts:
+  `DB instance restarted` also fires on every startup and reboot, and backups/shutdown are irrelevant. A database never stopped since creation counts from its creation event.
+  RDS keeps events for at most 14 days (`DescribeEvents` Duration max 20160 min), so a database up longer reports "Up over 14 days" instead of an exact time.
+  The start time is cached 5 min per database (and dropped when it leaves `available`), so status polling does not call `DescribeEvents` every time.
+  RDS reports "started" about 2 min before the database finishes booting and shows `available`; uptime counts from that event.
+- **Needs `rds:DescribeEvents`** (cannot be resource-scoped): added to `iam/client-role-policy.json` and `iam/client-role-policy-tag-based.json`. Without it, uptime is hidden
+  (warning in the log, retried after ~60s) and nothing else is affected.
+- Real-backend run against the test account after the change: DB `started_at=2026-11-09T12:58:29Z` (17h 57m), EC2 launch times matching the CLI.
+
+**Tests (257 total, all passing)**: `tests/test_uptime.py` (26: RDS newest-start/reboots ignored/never-stopped/over-14-days/permission denied/throttled/caching/refetch after a stop,
+EC2 via moto, fake backend, service math incl. negative skew and cache staleness) and 5 browser tests (formatting table, rows + tooltip + banner, ticking, stopped->restarted, "over 14 days"
+via an intercepted response). Three older tests compared whole rows for equality and were updated to assert the full row shape. No screenshots (paused at the owner's request).
+
+**Not done / possible next step**: this is "uptime since last start", live. It does not store history, so there is no cumulative running-hours or cost report; that needs a small
+database (Postgres) to record start/stop transitions.
+
 ## .gitignore update for the OAuth credentials (2026-11-10, requested by the owner)
 Re-audited against the disk: nothing tracked matches an ignore rule; the only untracked files are the 3 new test files. Added rules for likely accidents now that Google credentials exist:
 `client_secret*.json` / `client_secrets*.json` (Google Cloud's "Download JSON" file), `/clients.*.json` except `!/clients.example.json` (e.g. `clients.prod.json`), and SSH private keys

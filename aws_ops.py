@@ -3,8 +3,13 @@
 RealBackend - boto3 against EC2 / RDS, optionally assuming a per-client IAM role.
 FakeBackend - in-memory resources with timed transitions (tests and AWS_MODE=fake demos).
 
-Both: describe(client, kind) -> [{"id", "state", "error"}] in configured order;
+Both: describe(client, kind) -> [{"id", "state", "error", "started_at", "up_over_seconds"}] in configured order;
       start / stop(client, kind, ids) -> None, raising ServiceError on failure.
+
+`started_at` (epoch seconds, or None) is when a running/available resource was last started:
+    EC2  the instance's LaunchTime, which AWS resets on every stop/start.
+    RDS  the newest "DB instance started" event (or "DB instance created" if it was never stopped). RDS keeps events for at
+         most 14 days: a database that has been up longer reports `up_over_seconds` instead ("up for over 14 days").
 """
 from __future__ import annotations
 
@@ -20,6 +25,8 @@ log = logging.getLogger("aws")
 
 ACCESS_DENIED = {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation", "AuthFailure", "UnauthorizedAccess"}
 WRONG_STATE = {"InvalidDBInstanceState", "InvalidDBInstanceStateFault", "IncorrectInstanceState", "IncorrectState"}
+RDS_EVENT_WINDOW_DAYS = 14                 # the most RDS keeps (DescribeEvents Duration maximum: 20160 minutes)
+RDS_START_CACHE_SECONDS = 300           # a start time only changes when the database is stopped and started again
 NOT_FOUND = {"InvalidInstanceID.NotFound", "DBInstanceNotFound", "DBInstanceNotFoundFault", "InvalidInstanceID.Malformed"}
 THROTTLED = {"Throttling", "ThrottlingException", "RequestLimitExceeded"}
 
@@ -111,6 +118,7 @@ class RealBackend:
         self._now = now
         self._lock = threading.Lock()
         self._apis: dict[tuple[str, str], tuple[object, float]] = {}
+        self._rds_start: dict[tuple[str, str], tuple[float, float | None, int | None]] = {}   # (slug, id) -> (fetched, started, over)
 
     def _api(self, client: Client, service: str):
         """boto3 client for this tenant. Role credentials are cached and renewed 5 min before expiry.
@@ -161,7 +169,10 @@ class RealBackend:
         def call(batch):
             for res in api.describe_instances(InstanceIds=batch).get("Reservations", []):
                 for inst in res.get("Instances", []):
-                    out[inst["InstanceId"]] = {"id": inst["InstanceId"], "state": inst["State"]["Name"], "error": None}
+                    state, launched = inst["State"]["Name"], inst.get("LaunchTime")
+                    out[inst["InstanceId"]] = {
+                        "id": inst["InstanceId"], "state": state, "error": None, "up_over_seconds": None,
+                        "started_at": launched.timestamp() if state == "running" and isinstance(launched, datetime) else None}
 
         try:
             call(ids)
@@ -184,12 +195,53 @@ class RealBackend:
             try:
                 dbs = api.describe_db_instances(DBInstanceIdentifier=i).get("DBInstances", [])
                 if dbs:
-                    out[i] = {"id": i, "state": dbs[0]["DBInstanceStatus"], "error": None}
+                    state, started, over = dbs[0]["DBInstanceStatus"], None, None
+                    if state == "available":
+                        started, over = self._rds_started(api, client, i)
+                    else:
+                        self._rds_start.pop((client.slug, i), None)      # leaving "available" invalidates the cached start
+                    out[i] = {"id": i, "state": state, "error": None, "started_at": started, "up_over_seconds": over}
             except ClientError as e:
                 if e.response.get("Error", {}).get("Code") in ACCESS_DENIED:
                     raise  # same for every resource: report once
                 out[i] = {"id": i, "state": "unknown", "error": friendly(e)[0]}
         return out
+
+    def _rds_started(self, api, client: Client, rid: str) -> tuple[float | None, int | None]:
+        """(started_at, up_over_seconds) for an available database, from RDS events. Never raises: uptime is a nicety.
+
+        Only "DB instance started" counts as a start: "DB instance restarted" events also fire during every startup and on
+        reboots, and would make a database look newer than it is. A database that was never stopped started when it was created.
+        """
+        key, now = (client.slug, rid), self._now()
+        hit = self._rds_start.get(key)
+        if hit and now - hit[0] < RDS_START_CACHE_SECONDS:
+            return hit[1], hit[2]
+        started = created = None
+        over = None
+        ttl_offset = 0.0
+        try:
+            pages = api.get_paginator("describe_events").paginate(
+                SourceIdentifier=rid, SourceType="db-instance", Duration=RDS_EVENT_WINDOW_DAYS * 24 * 60)
+            for page in pages:
+                for ev in page.get("Events", []):
+                    when, msg = ev.get("Date"), ev.get("Message", "")
+                    if not isinstance(when, datetime):
+                        continue
+                    if msg == "DB instance started":
+                        started = max(started or 0.0, when.timestamp())
+                    elif msg == "DB instance created":
+                        created = when.timestamp()
+            if started is None and created is not None:
+                started = created
+            elif started is None:
+                over = RDS_EVENT_WINDOW_DAYS * 86400             # nothing in the window: it has been up for longer
+        except Exception as exc:                                  # e.g. rds:DescribeEvents not allowed, throttling
+            log.warning("could not read RDS events for %s/%s (uptime hidden): %s", client.slug, rid, exc)
+            started, over = None, None
+            ttl_offset = RDS_START_CACHE_SECONDS - 60             # retry sooner than a success, but not on every poll
+        self._rds_start[key] = (now - ttl_offset, started, over)
+        return started, over
 
     # -- writes --
 
@@ -231,8 +283,9 @@ class FakeBackend:
     """Pretend AWS. Transitions finish after a delay like the preview mock (RDS 9s, EC2 6s, times `speed`).
     By default the first client is running and the others are stopped."""
 
-    def __init__(self, clients: list[Client], speed: float = 1.0, clock=time.monotonic, running: set[str] | None = None):
-        self._clock, self._speed = clock, speed
+    def __init__(self, clients: list[Client], speed: float = 1.0, clock=time.monotonic, running: set[str] | None = None,
+                 wall=time.time, initial_uptime: float = 7500.0):
+        self._clock, self._speed, self._wall = clock, speed, wall
         self._lock = threading.Lock()
         self.fail_next: ServiceError | None = None   # test hook
         self.calls: list[tuple] = []                  # test hook: (action, slug, kind, ids, clock time)
@@ -243,11 +296,15 @@ class FakeBackend:
             for kind in ("rds", "ec2"):
                 up = "available" if kind == "rds" else "running"
                 for r in c.resources(kind):
-                    self._rec[(c.slug, kind, r.id)] = {"state": up if c.slug in running else "stopped", "target": None, "at": 0.0}
+                    is_up = c.slug in running
+                    self._rec[(c.slug, kind, r.id)] = {"state": up if is_up else "stopped", "target": None, "at": 0.0,
+                                                       "since": wall() - initial_uptime if is_up else None}
 
     def _settle(self, rec):
         if rec["target"] and self._clock() >= rec["at"]:
             rec["state"], rec["target"] = rec["target"], None
+            # it became available `clock - at` seconds ago (describe may be called long after the transition finished)
+            rec["since"] = self._wall() - (self._clock() - rec["at"]) if rec["state"] in ("available", "running") else None
 
     def describe(self, client, kind):
         with self._lock:
@@ -255,7 +312,9 @@ class FakeBackend:
             for r in client.resources(kind):
                 rec = self._rec[(client.slug, kind, r.id)]
                 self._settle(rec)
-                out.append({"id": r.id, "state": rec["state"], "error": None})
+                is_up = rec["state"] in ("available", "running")
+                out.append({"id": r.id, "state": rec["state"], "error": None,
+                            "started_at": rec["since"] if is_up else None, "up_over_seconds": None})
             return out
 
     def _act(self, client, kind, ids, action):
@@ -284,4 +343,5 @@ class FakeBackend:
 
     def set_state(self, slug, kind, rid, state, error=None):   # test hook
         with self._lock:
-            self._rec[(slug, kind, rid)].update(state=state, target=None)
+            self._rec[(slug, kind, rid)].update(
+                state=state, target=None, since=self._wall() if state in ("available", "running") else None)

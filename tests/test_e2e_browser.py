@@ -634,3 +634,92 @@ def test_connector_arrow_is_two_sided_and_symmetric(server, browser):
     assert g["clearAbove"] >= 4 and g["clearBelow"] >= 4, "an arrowhead touches a card"
     assert abs(g["clearAbove"] - g["clearBelow"]) <= 1.5, "clearance above and below should match"
     ctx.close()
+
+
+# ---------------------------------------------------------------- uptime since the last start
+# A dedicated server: Uniservice starts running with the fake backend's demo uptime of 2h 05m, and nothing else touches it.
+
+@pytest.fixture(scope="module")
+def fresh_server():
+    proc, base = launch()
+    yield base
+    stop(proc)
+
+
+def uptime_page(browser, base, path="/c/uniservice"):
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    watch = Watch(page)
+    page.goto(base + "/login/google")
+    return ctx, page, watch, path
+
+
+def test_uptime_label_formatting(fresh_server, browser):
+    ctx, page, _, _ = uptime_page(browser, fresh_server)
+    page.goto(fresh_server + "/c/uniservice")
+    cases = {0: "less than a minute", 59: "less than a minute", 60: "1m", 3599: "59m", 3600: "1h 0m", 3660: "1h 1m",
+             86399: "23h 59m", 86400: "1d 0h", 90000: "1d 1h", 9 * 86400 + 5 * 3600: "9d 5h", -50: "less than a minute"}
+    got = page.evaluate("secs => secs.map(s => window.L180.durationLabel(s))", list(cases))
+    assert got == list(cases.values())
+    assert page.evaluate("window.L180.uptimeLabel(7500)") == "Uptime - 2h 5m"
+    ctx.close()
+
+
+def test_running_resources_show_uptime_with_the_exact_start_in_a_tooltip(fresh_server, browser):
+    ctx, page, watch, _ = uptime_page(browser, fresh_server)
+    page.goto(fresh_server + "/c/uniservice")
+    expect(page.locator("#env-state")).to_have_text("Running")
+    ups = page.locator(".row .row-up")
+    expect(ups).to_have_count(4)                                         # 2 databases + 2 applications, all running
+    for i in range(4):
+        expect(ups.nth(i)).to_have_text(re.compile(r"^Uptime - 2h [0-9]+m$"))
+        assert ups.nth(i).get_attribute("title").startswith("Started ")
+    expect(page.locator("#env-detail")).to_contain_text("Fully up for 2h")
+    assert watch.problems == [], "\n".join(watch.problems)
+    ctx.close()
+
+
+def test_uptime_ticks_without_a_refresh(fresh_server, browser):
+    ctx, page, _, _ = uptime_page(browser, fresh_server)
+    page.goto(fresh_server + "/c/uniservice")
+    first = page.locator("#group-ec2 .row .row-up").first
+    expect(first).to_have_text(re.compile(r"^Uptime - 2h "))
+    # pretend the data arrived 3 hours ago: the next 10-second repaint must show 5h without any network round trip
+    page.evaluate("document.querySelectorAll('.row').forEach(r => { r._up.at -= 3 * 3600 * 1000; })")
+    expect(first).to_have_text(re.compile(r"^Uptime - 5h "), timeout=15000)
+    ctx.close()
+
+
+def test_stopped_resource_shows_no_uptime_and_a_restarted_one_starts_from_zero(fresh_server, browser):
+    ctx, page, _, _ = uptime_page(browser, fresh_server)
+    page.goto(fresh_server + "/c/uniservice")
+    app = page.locator("#group-ec2 .row").first
+    expect(app.locator(".row-up")).to_have_text(re.compile(r"^Uptime - 2h "))
+    app.locator(".js-stop").click()
+    page.locator("#confirm-ok").click()
+    expect(app.locator(".pill")).to_have_text("Stopped", timeout=30000)
+    expect(app.locator(".row-up")).to_be_hidden()                        # nothing to show while it is down
+    expect(page.locator("#env-detail")).not_to_contain_text("Fully up")  # the environment is no longer fully up
+    app.locator(".js-start").click()
+    expect(app.locator(".pill")).to_have_text("Running", timeout=30000)
+    expect(app.locator(".row-up")).to_have_text(re.compile(r"^Uptime - (less than a minute|[0-9]+m)$"))   # restarted: counting from now
+    ctx.close()
+
+
+def test_database_up_longer_than_aws_history_says_so(fresh_server, browser):
+    ctx, page, _, _ = uptime_page(browser, fresh_server)
+
+    def patch(route):                                                    # RDS only remembers 14 days: simulate "older than that"
+        response = route.fetch()
+        body = response.json()
+        body["rds"][0].update(started_at=None, uptime_seconds=None, uptime_over_seconds=14 * 86400)
+        route.fulfill(response=response, json=body)
+
+    page.route("**/api/c/uniservice/status", patch)
+    page.goto(fresh_server + "/c/uniservice")
+    first_db = page.locator("#group-rds .row .row-up").first
+    expect(first_db).to_have_text("Uptime - over 14 days")
+    assert "14 days" in first_db.get_attribute("title")
+    expect(page.locator("#group-rds .row .row-up").nth(1)).to_have_text(re.compile(r"^Uptime - 2h "))      # the other DB is exact
+    expect(page.locator("#env-detail")).not_to_contain_text("Fully up")  # an unknown start means we cannot claim a combined uptime
+    ctx.close()

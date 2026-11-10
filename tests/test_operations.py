@@ -48,7 +48,10 @@ def test_status_shape_matches_contract():
     svc, *_ = make()
     s = svc.status("full")
     assert s["client"] == {"slug": "full", "name": "Full"} and s["region"] == REGION
-    assert s["rds"][0] == {"id": "full-db", "name": "Primary", "state": "available", "error": None}
+    row = s["rds"][0]
+    assert {k: row[k] for k in ("id", "name", "state", "error")} == {"id": "full-db", "name": "Primary", "state": "available", "error": None}
+    assert set(row) == {"id", "name", "state", "error", "started_at", "uptime_seconds", "uptime_over_seconds"}   # the full contract
+    assert row["uptime_seconds"] is not None and row["started_at"].endswith("Z")                              # a running DB has an uptime
     assert s["ec2"][1]["name"] == "API" and s["operation"] is None
 
 

@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const L = window.L180;
-  const { $, capitalise, classify, labelFor, isTransition, summarize, envButtons, describeGroup, api, toast, confirmStop, POLL, secondsAgo, WORDS } = L;
+  const { $, capitalise, classify, labelFor, isTransition, summarize, envButtons, describeGroup, api, toast, confirmStop, POLL, secondsAgo, WORDS, durationLabel, uptimeLabel } = L;
 
   let slug = document.body.dataset.client;
   const clientName = () => document.body.dataset.clientName || 'this client';
@@ -29,6 +29,7 @@
   }
 
   let status = null, lastOkAt = 0, pending = false, inflight = false, timer = null, lastSeenRunningOp = null;
+  let envDetailBase = '', envUp = null;   // banner text, and how long the whole environment has been up together
 
   /* ---------- rendering ---------- */
 
@@ -119,6 +120,37 @@
     const err = $('.row-error', row); err.hidden = !item.error; err.textContent = item.error || '';
     $('.js-start', row).disabled = busy || !(key === 'stopped' || key === 'error');
     $('.js-stop', row).disabled = busy || !(key === 'ok' || key === 'error');
+    row._up = { base: item.uptime_seconds, over: item.uptime_over_seconds, startedAt: item.started_at, at: lastOkAt || Date.now() };
+    paintUptime(row);
+  }
+
+  /** "Uptime - 3h 12m" under a running resource. The server sends seconds-up as of the last refresh; we add the time since. */
+  function paintUptime(row) {
+    const el = $('.row-up', row), u = row._up;
+    let text = '', tip = '';
+    if (u && u.base != null) {
+      text = uptimeLabel(u.base + (Date.now() - u.at) / 1000);
+      tip = 'Started ' + new Date(u.startedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    } else if (u && u.over != null) {
+      text = `Uptime - over ${Math.round(u.over / 86400)} days`;
+      tip = 'AWS only keeps 14 days of history, so the exact start time is not available.';
+    }
+    el.hidden = !text;
+    if (el.textContent !== text) el.textContent = text;
+    el.title = tip;
+  }
+
+  function paintEnvDetail() {
+    const hl = envDetailBase && envUp ? `Fully up for ${durationLabel(envUp.base + (Date.now() - envUp.at) / 1000)}` : '';
+    const text = hl ? `${envDetailBase} ${hl}` : envDetailBase;
+    if (el.envDetail.textContent === text) return;
+    el.envDetail.textContent = envDetailBase;           // plain text, then the highlighted phrase as its own element
+    if (hl) {
+      const span = document.createElement('span');
+      span.className = 'up-hl';
+      span.textContent = hl;
+      el.envDetail.append(' ', span);
+    }
   }
 
   function renderEnvironment(keys, flat, op, busy) {
@@ -132,7 +164,10 @@
     }
     el.env.dataset.state = sum.state;
     el.envState.textContent = sum.title;
-    el.envDetail.textContent = detail;
+    envDetailBase = detail;
+    const ups = flat.length && sum.state === 'ok' ? [...listOf('rds'), ...listOf('ec2')].map((r) => r.uptime_seconds) : [];
+    envUp = ups.length && ups.every((u) => u != null) ? { base: Math.min(...ups), at: lastOkAt || Date.now() } : null;
+    paintEnvDetail();
 
     const b = envButtons(flat, op, busy);
     el.envStart.disabled = !known || b.startDisabled;
@@ -263,6 +298,7 @@
 
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   setInterval(tickUpdated, 1000);
+  setInterval(() => { for (const kind of KINDS) for (const row of G[kind].rows.children) paintUptime(row); paintEnvDetail(); }, 10000);
   render();
   refresh();
 })();

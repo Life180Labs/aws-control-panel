@@ -4,22 +4,47 @@
     {
       "Sid": "ReadStatus",
       "Effect": "Allow",
-      "Action": ["ec2:DescribeInstances"],
+      "Action": [
+        "ec2:DescribeInstances"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DatabaseEventsForUptime",
+      "Effect": "Allow",
+      "Action": [
+        "rds:DescribeEvents"
+      ],
       "Resource": "*"
     },
     {
       "Sid": "StartStopTaggedInstances",
       "Effect": "Allow",
-      "Action": ["ec2:StartInstances", "ec2:StopInstances"],
+      "Action": [
+        "ec2:StartInstances",
+        "ec2:StopInstances"
+      ],
       "Resource": "arn:aws:ec2:REGION:CLIENT_ACCOUNT_ID:instance/*",
-      "Condition": { "StringEquals": { "aws:ResourceTag/l180-control-panel": "managed" } }
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/l180-control-panel": "managed"
+        }
+      }
     },
     {
       "Sid": "TaggedDatabases",
       "Effect": "Allow",
-      "Action": ["rds:DescribeDBInstances", "rds:StartDBInstance", "rds:StopDBInstance"],
+      "Action": [
+        "rds:DescribeDBInstances",
+        "rds:StartDBInstance",
+        "rds:StopDBInstance"
+      ],
       "Resource": "arn:aws:rds:REGION:CLIENT_ACCOUNT_ID:db:*",
-      "Condition": { "StringEquals": { "aws:ResourceTag/l180-control-panel": "managed" } }
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/l180-control-panel": "managed"
+        }
+      }
     }
   ]
 }

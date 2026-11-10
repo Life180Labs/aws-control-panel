@@ -156,7 +156,10 @@ def test_overview_and_status_contract(authed):
 
     st = c.get("/api/c/uniservice/status").json
     assert st["client"] == {"slug": "uniservice", "name": "Uniservice"} and st["region"] == "ap-south-1"
-    assert st["rds"][0] == {"id": UNI_DB, "name": "Primary database", "state": "available", "error": None}
+    row = st["rds"][0]
+    assert {k: row[k] for k in ("id", "name", "state", "error")} == {"id": UNI_DB, "name": "Primary database", "state": "available", "error": None}
+    assert row["uptime_seconds"] > 0 and row["started_at"].endswith("Z") and row["uptime_over_seconds"] is None
+    assert st["ec2"][0]["uptime_seconds"] > 0
     assert [r["name"] for r in st["ec2"]] == ["Web server", "API server"]
 
 

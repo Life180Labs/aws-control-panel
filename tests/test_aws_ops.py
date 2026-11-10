@@ -50,7 +50,9 @@ def test_real_describe_start_stop(world):
     client, ec2, rds, ids = world
     b = RealBackend()
     assert [r["state"] for r in b.describe(client, "ec2")] == ["running", "running"]
-    assert b.describe(client, "rds") == [{"id": "acme-db", "state": "available", "error": None}]
+    (db,) = b.describe(client, "rds")
+    assert (db["id"], db["state"], db["error"]) == ("acme-db", "available", None)
+    assert set(db) == {"id", "state", "error", "started_at", "up_over_seconds"}        # uptime fields are always present
 
     b.stop(client, "ec2", ids)
     b.stop(client, "rds", ["acme-db"])

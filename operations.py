@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 from aws_ops import Conflict, NotFound, ServiceError, classify, is_transition
 from config import Client
@@ -48,13 +49,13 @@ class _Abort(Exception):
 
 class EnvironmentService:
     def __init__(self, clients: list[Client], backend, *, cache_ttl=3.0, poll_interval=5.0, wait_timeout=1800.0,
-                 done_retention=120.0, failed_retention=600.0, clock=time.monotonic, sleep=time.sleep):
+                 done_retention=120.0, failed_retention=600.0, clock=time.monotonic, sleep=time.sleep, wall=time.time):
         self.clients = {c.slug: c for c in clients}
         self.order = [c.slug for c in clients]
         self.backend = backend
         self.cache_ttl, self.poll_interval, self.wait_timeout = cache_ttl, poll_interval, wait_timeout
         self.done_retention, self.failed_retention = done_retention, failed_retention
-        self._clock, self._sleep = clock, sleep
+        self._clock, self._sleep, self._wall = clock, sleep, wall   # wall = real time, for uptime (clock is monotonic)
         self._cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
         self._cache_locks = {s: threading.Lock() for s in self.clients}
         self._action_locks = {s: threading.RLock() for s in self.clients}
@@ -80,7 +81,20 @@ class EnvironmentService:
                 data = self.backend.describe(client, kind)
                 self._cache[key] = (self._clock(), data)
         names = {r.id: r.name for r in client.resources(kind)}
-        return [{"id": d["id"], "name": names.get(d["id"], d["id"]), "state": d["state"], "error": d["error"]} for d in data]
+        now = self._wall()
+        rows = []
+        for d in data:
+            running = classify(d["state"], d["error"]) == "ok"
+            started = d.get("started_at") if running else None
+            rows.append({
+                "id": d["id"], "name": names.get(d["id"], d["id"]), "state": d["state"], "error": d["error"],
+                # uptime is computed now from the (cached) start time, so the 3s status cache never makes it stale
+                "started_at": datetime.fromtimestamp(started, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if started else None,
+                "uptime_seconds": int(max(0.0, now - started)) if started else None,
+                # RDS keeps only 14 days of events: a database up for longer reports a lower bound instead of a start
+                "uptime_over_seconds": d.get("up_over_seconds") if running and not started else None,
+            })
+        return rows
 
     def _invalidate(self, client: Client, kind: str | None = None):
         with self._cache_locks[client.slug]:

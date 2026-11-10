@@ -155,7 +155,18 @@ window.L180 = (() => {
   }
 
   const POLL = { normal: 15000, fast: 4000 };
+  /** Plain-language length of time: "less than a minute", "42m", "3h 12m", "2d 5h". */
+  const durationLabel = (secs) => {
+    const s = Math.max(0, Math.floor(secs));
+    if (s < 60) return 'less than a minute';
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ${m % 60}m`;
+    return `${Math.floor(h / 24)}d ${h % 24}h`;
+  };
+  const uptimeLabel = (secs) => `Uptime - ${durationLabel(secs)}`;
   const secondsAgo = (t) => { const s = Math.max(0, Math.round((Date.now() - t) / 1000)); return s < 5 ? 'Updated just now' : `Updated ${s}s ago`; };
 
-  return { $, capitalise, classify, labelFor, isTransition, summarize, envButtons, describeGroup, groupValue, api, toast, confirmStop, POLL, secondsAgo, WORDS };
+  return { $, capitalise, classify, labelFor, isTransition, summarize, envButtons, describeGroup, groupValue, api, toast, confirmStop, POLL, secondsAgo, WORDS, durationLabel, uptimeLabel };
 })();
