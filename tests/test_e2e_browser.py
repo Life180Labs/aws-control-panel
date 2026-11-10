@@ -674,7 +674,7 @@ def test_running_resources_show_uptime_with_the_exact_start_in_a_tooltip(fresh_s
     for i in range(4):
         expect(ups.nth(i)).to_have_text(re.compile(r"^Uptime - 2h [0-9]+m$"))
         assert ups.nth(i).get_attribute("title").startswith("Started ")
-    expect(page.locator("#env-detail")).to_contain_text("Fully up for 2h")
+    expect(page.locator("#env-detail")).not_to_contain_text("Fully up")   # the banner carries no uptime
     assert watch.problems == [], "\n".join(watch.problems)
     ctx.close()
 
@@ -699,7 +699,6 @@ def test_stopped_resource_shows_no_uptime_and_a_restarted_one_starts_from_zero(f
     page.locator("#confirm-ok").click()
     expect(app.locator(".pill")).to_have_text("Stopped", timeout=30000)
     expect(app.locator(".row-up")).to_be_hidden()                        # nothing to show while it is down
-    expect(page.locator("#env-detail")).not_to_contain_text("Fully up")  # the environment is no longer fully up
     app.locator(".js-start").click()
     expect(app.locator(".pill")).to_have_text("Running", timeout=30000)
     expect(app.locator(".row-up")).to_have_text(re.compile(r"^Uptime - (less than a minute|[0-9]+m)$"))   # restarted: counting from now
@@ -721,5 +720,4 @@ def test_database_up_longer_than_aws_history_says_so(fresh_server, browser):
     expect(first_db).to_have_text("Uptime - over 14 days")
     assert "14 days" in first_db.get_attribute("title")
     expect(page.locator("#group-rds .row .row-up").nth(1)).to_have_text(re.compile(r"^Uptime - 2h "))      # the other DB is exact
-    expect(page.locator("#env-detail")).not_to_contain_text("Fully up")  # an unknown start means we cannot claim a combined uptime
     ctx.close()

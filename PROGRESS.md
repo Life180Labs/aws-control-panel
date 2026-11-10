@@ -343,3 +343,6 @@ visible** (every success/error message hidden). Found by the browser test (`disp
 Original plan: Plan: `GoogleProvider` (Authlib) behind the existing `auth.py` seam, state+nonce validation,
 `hd` + `email_verified` + email-suffix domain check, tests with a mocked IdP (wrong domain, unverified email, bad state,
 replayed callback), remove dev stub from production builds, go-live docs.
+
+### Banner uptime removed
+The environment banner no longer shows "Fully up for ..."; per-resource "Uptime - ..." rows remain.

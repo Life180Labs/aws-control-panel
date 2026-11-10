@@ -29,7 +29,6 @@
   }
 
   let status = null, lastOkAt = 0, pending = false, inflight = false, timer = null, lastSeenRunningOp = null;
-  let envDetailBase = '', envUp = null;   // banner text, and how long the whole environment has been up together
 
   /* ---------- rendering ---------- */
 
@@ -140,19 +139,6 @@
     el.title = tip;
   }
 
-  function paintEnvDetail() {
-    const hl = envDetailBase && envUp ? `Fully up for ${durationLabel(envUp.base + (Date.now() - envUp.at) / 1000)}` : '';
-    const text = hl ? `${envDetailBase} ${hl}` : envDetailBase;
-    if (el.envDetail.textContent === text) return;
-    el.envDetail.textContent = envDetailBase;           // plain text, then the highlighted phrase as its own element
-    if (hl) {
-      const span = document.createElement('span');
-      span.className = 'up-hl';
-      span.textContent = hl;
-      el.envDetail.append(' ', span);
-    }
-  }
-
   function renderEnvironment(keys, flat, op, busy) {
     const known = !!status;
     const sum = summarize(flat, op, known);
@@ -164,10 +150,7 @@
     }
     el.env.dataset.state = sum.state;
     el.envState.textContent = sum.title;
-    envDetailBase = detail;
-    const ups = flat.length && sum.state === 'ok' ? [...listOf('rds'), ...listOf('ec2')].map((r) => r.uptime_seconds) : [];
-    envUp = ups.length && ups.every((u) => u != null) ? { base: Math.min(...ups), at: lastOkAt || Date.now() } : null;
-    paintEnvDetail();
+    if (el.envDetail.textContent !== detail) el.envDetail.textContent = detail;
 
     const b = envButtons(flat, op, busy);
     el.envStart.disabled = !known || b.startDisabled;
@@ -298,7 +281,7 @@
 
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   setInterval(tickUpdated, 1000);
-  setInterval(() => { for (const kind of KINDS) for (const row of G[kind].rows.children) paintUptime(row); paintEnvDetail(); }, 10000);
+  setInterval(() => { for (const kind of KINDS) for (const row of G[kind].rows.children) paintUptime(row); }, 10000);
   render();
   refresh();
 })();
