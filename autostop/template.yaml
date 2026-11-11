@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  L180 auto-stop. An hourly EventBridge rule runs a Lambda that stops client environments (EC2 and RDS) once everything
+  running in them has been up for the configured number of hours. Deploys in DRY-RUN mode by default.
+
+Parameters:
+  ClientsJson:
+    Type: String
+    Description: >-
+      Same shape as the control panel's clients.json, on one line:
+      {"clients":[{"slug":"uniservice","region":"ap-south-2","rds_instances":[{"id":"db-1"}],"ec2_instances":[{"id":"i-0123"}]}]}.
+      Add role_arn (and external_id) for clients in other AWS accounts.
+    MaxLength: 4096
+  ThresholdHours:
+    Type: Number
+    Default: 12
+    MinValue: 1
+    MaxValue: 336
+    Description: Stop an environment once everything running in it has been up this many hours (max 336 = 14 days).
+  DryRun:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "true = only log (and email) what would be stopped. Set to false once the logs look right."
+  StopRule:
+    Type: String
+    Default: all
+    AllowedValues: [all, any]
+    Description: "all = every running resource must be over the limit; any = one is enough."
+  Schedule:
+    Type: String
+    Default: rate(1 hour)
+    Description: EventBridge schedule expression, for example rate(1 hour) or rate(15 minutes).
+  NotificationEmail:
+    Type: String
+    Default: ""
+    Description: Optional. Receives an email whenever something is stopped (or would be, in dry run) or a run fails. Confirm the subscription email.
+  CodeBucket:
+    Type: String
+    Description: S3 bucket holding the Lambda zip (deploy.py uploads it for you).
+  CodeKey:
+    Type: String
+    Description: S3 key of the Lambda zip.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90]
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref NotificationEmail, ""]]
+
+Resources:
+  Topic:
+    Type: AWS::SNS::Topic
+    Condition: HasEmail
+    Properties:
+      TopicName: l180-auto-stop
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref NotificationEmail
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/l180-auto-stop
+      RetentionInDays: !Ref LogRetentionDays
+
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: l180-auto-stop
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: auto-stop
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${LogGroup.Arn}:*"
+              - Sid: Inspect
+                Effect: Allow
+                Action: [ec2:DescribeInstances, rds:DescribeDBInstances, rds:DescribeEvents, rds:ListTagsForResource]
+                Resource: "*"
+              - Sid: Stop
+                Effect: Allow
+                Action: ec2:StopInstances
+                Resource: !Sub "arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:instance/*"
+              - Sid: StopDatabases
+                Effect: Allow
+                Action: rds:StopDBInstance
+                Resource: !Sub "arn:${AWS::Partition}:rds:*:${AWS::AccountId}:db:*"
+              - Sid: ClientAccounts
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::*:role/l180-control-panel"
+              - !If
+                - HasEmail
+                - Sid: Notify
+                  Effect: Allow
+                  Action: sns:Publish
+                  Resource: !Ref Topic
+                - !Ref AWS::NoValue
+
+  Function:
+    Type: AWS::Lambda::Function
+    DependsOn: LogGroup
+    Properties:
+      FunctionName: l180-auto-stop
+      Description: Stops client environments that have been up too long
+      Runtime: python3.13
+      Handler: handler.lambda_handler
+      Role: !GetAtt FunctionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      MemorySize: 256
+      Timeout: 900
+      Environment:
+        Variables:
+          CLIENTS_JSON: !Ref ClientsJson
+          THRESHOLD_HOURS: !Ref ThresholdHours
+          DRY_RUN: !Ref DryRun
+          STOP_RULE: !Ref StopRule
+          SNS_TOPIC_ARN: !If [HasEmail, !Ref Topic, ""]
+
+  ScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: l180-auto-stop-schedule
+      Description: Runs the auto-stop check
+      ScheduleExpression: !Ref Schedule
+      State: ENABLED
+      Targets:
+        - Id: auto-stop
+          Arn: !GetAtt Function.Arn
+
+  SchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduleRule.Arn
+
+Outputs:
+  FunctionName:
+    Value: !Ref Function
+  LogGroupName:
+    Value: !Ref LogGroup
+  DryRun:
+    Value: !Ref DryRun

@@ -346,3 +346,9 @@ replayed callback), remove dev stub from production builds, go-live docs.
 
 ### Banner uptime removed
 The environment banner no longer shows "Fully up for ..."; per-resource "Uptime - ..." rows remain.
+
+## Auto-stop Lambda (hourly, EventBridge)
+`autostop/` stops an environment when every running EC2/RDS in it has been up >= 12h (stop apps, wait, then databases). Dry run by default, tag `auto-stop=disabled` exempts, unknown uptime skips. CloudFormation template + `deploy.py`; 33 tests (`tests/test_autostop.py`). Not yet deployed to AWS.
+
+### Auto-stop email format
+One email per client, client name in the subject ("[Dry run] L180 auto-stop: <Client> would be stopped"), aligned plain-text body (client, result, mode, rule, time, resource table with names and uptimes). 43 tests.

@@ -1,4 +1,4 @@
 -r requirements.txt
 pytest>=8
-moto[ec2,rds]>=5
+moto[ec2,rds,cloudformation,lambda,sns,events,logs,iam,s3]>=5
 playwright>=1.40
